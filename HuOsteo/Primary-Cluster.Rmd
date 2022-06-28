@@ -23,11 +23,15 @@ library(Seurat)
 library(ggplot2)
 library(ggrepel)
 library(tidyverse)
-library(stringr)
 library(harmony)
-library(cowplot)
+library(patchwork)
+library(future.apply)
+
+plan(multicore)
+options(future.globals.maxSize = 10000*1024^2)
 
 set.seed(888)
+setwd("/home/gdrobertslab/lab/Analysis/Ryan/RProjects/CellTypeAnnRefs/HuOsteo")
 
 sysfonts::font_add("Arial Narrow", "ARIALN.TTF", bold = "ARIALNB.TTF")
 showtext::showtext_auto()
@@ -80,14 +84,10 @@ here reloading) the "comb.qs" object.
 
 ```{r}
 # Start from this stopping point - merged and harmony aligned
-comb <- qs::qread("HuOsteo/comb.qs")
+comb <- qs::qread("comb.qs")
 
 # Plot the integrated samples
 rDimPlot(comb, "Primary Tumors (integrated)", repel = T)
-
-rDimPlot(comb, "Primary Tumors (integrated)", group.by = "src")
-
-rDimPlot(comb, "Primary Tumors (integrated)", split.by = "src", ncol = 4)
 ```
 
 ## Interim conclusions
@@ -96,88 +96,11 @@ A broad array of distinct cell types is represented across the different primary
 tumor samples. These subsets appear to be of high enough quality and are appropriate
 for building both an tumor cell and a stromal reference.
 
-# A brief tangent - Optimize UMAP parameters
-
-This code was created to illustrate how different changes in UMAP parameters affect
-the way that cells cluster. Bottom line is that the default parameters work pretty
-well and are fairly balanced, though tweaking can be helpful in certain situations.
-
-```{r}
-# p <- list()
-# for(i in 1:5) {
-#   test <- RunUMAP(comb, reduction = "harmony", dims = 1:30,
-#     set.op.mix.ratio = (i-1)*0.25)
-#   test <- test %>%
-#     FindNeighbors(reduction = "harmony", dims = 1:30) %>%
-#     FindClusters()
-#   p[[i]] <- rDimPlot(test, reduction = "umap", label = T, repel = T) +
-#       coord_fixed() +
-#       ggtitle(str_c("set.op.mix.ratio = ", (i-1)*0.25)) +
-#       theme(legend.position = "none")
-# }
-# plot_grid(plotlist = p, ncol = 3)
-
-# p <- list()
-# for(i in 1:5) {
-#   test <- RunUMAP(comb, reduction = "harmony", dims = 1:30, 
-#     n.neighbors = (i * 10))
-#   test <- test %>%
-#     FindNeighbors(reduction = "harmony", dims = 1:30) %>%
-#     FindClusters()
-#   p[[i]] <- rDimPlot(test, reduction = "umap", label = T, repel = T) +
-#       coord_fixed() +
-#       ggtitle(str_c("n.neighbors = ", (i * 10))) +
-#       theme(legend.position = "none")
-# }
-# plot_grid(plotlist = p, ncol = 3)
-
-# p <- list()
-# for(i in 1:5) {
-#   test <- RunUMAP(comb, reduction = "harmony", dims = 1:30, 
-#     n.epochs = (i * 100))
-#   test <- test %>%
-#     FindNeighbors(reduction = "harmony", dims = 1:30) %>%
-#     FindClusters()
-#   p[[i]] <- rDimPlot(test, reduction = "umap", label = T, repel = T) +
-#     coord_fixed() +
-#     ggtitle(str_c("n.epochs = ", (i * 100))) +
-#     theme(legend.position = "none")
-# }
-# plot_grid(plotlist = p, ncol = 3)
-
-# p <- list()
-# for(i in 1:5) {
-#   test <- RunUMAP(comb, reduction = "harmony", dims = 1:30, 
-#     min.dist = (.00045 * 4 ^ i))
-#   test <- test %>%
-#     FindNeighbors(reduction = "harmony", dims = 1:30) %>%
-#     FindClusters()
-#   p[[i]] <- rDimPlot(test, reduction = "umap", label = T, repel = T) +
-#     coord_fixed() +
-#     ggtitle(str_c("min.dist = ", (.00045 * 4 ^ i))) +
-#     theme(legend.position = "none")
-# }
-# plot_grid(plotlist = p, ncol = 3)
-
-# p <- list()
-# for(i in 1:5) {
-#   test <- RunUMAP(comb, reduction = "harmony", dims = 1:30, 
-#     local.connectivity = (2 ^ i))
-#   test <- test %>%
-#     FindNeighbors(reduction = "harmony", dims = 1:30) %>%
-#     FindClusters()
-#   p[[i]] <- rDimPlot(test, reduction = "umap", label = T, repel = T) +
-#     coord_fixed() +
-#     ggtitle(str_c("local.connectivity = ", (2 ^ i))) +
-#     theme(legend.position = "none")
-# }
-# plot_grid(plotlist = p, ncol = 3)
-```
-
 # Evaluate for cell cycle
 
 ```{r}
 comb <- kill_cc(comb)
+cc <- rDimPlot(comb, "All Cells - Cell Cycle Prediction")
 ```
 
 # Begin cell type annotation
@@ -191,10 +114,11 @@ First, we will use some standard assays to look for canonical markers of osteosa
 ```{r}
 feats <- c("COL1A1", "COL1A2", "SATB2")
 
-for(f in feats) {
+fplots <- lapply(feats, function(f) {
   p <- rFeaturePlot(comb, f, features = f)
-  print(p)
-}
+  return(p)
+})
+names(fplots) <- feats
 ```
 
 Next, we will look at the markers that were used in the manuscript that reported the
@@ -225,10 +149,10 @@ for(f in names(ms)) {
   g[[f]] <- rFeaturePlot(comb, f, features = str_c(f, "1"))
 }
 
-plot_grid(
+mods <- wrap_plots(
   plotlist = g,
   labels = LETTERS[seq_len(length(g))],
-  ncol = 4, nrow = 4
+  ncol = 5
 )
 ```
 
@@ -236,6 +160,7 @@ plot_grid(
 
 ```{r}
 if (!file.exists("selection.rds")) {
+  p <- rDimPlot(comb, "All Cells")
   selection <- CellSelector(p)
   saveRDS(selection, "selection.rds")
 }
@@ -243,7 +168,7 @@ selection <- readRDS("selection.rds")
 Idents(comb) <- comb$seurat_clusters
 Idents(comb, cells = selection) <- "Tumor"
 
-rDimPlot(comb, "Isolated (likely) tumor cells")
+tplot <- rDimPlot(comb, "Isolated (likely) tumor cells")
 ```
 
 Focus in on a module that defines the tumor cells so that we can isolate them.
@@ -278,3 +203,37 @@ gene list based off of the strictest power/log2FC criteria performs the best.
 The "selection.rds" file generated here together with the "comb.qs" file generated
 in the "Primary-CreateData.Rmd" script will be used to isolate tumor and stromal
 cells in the "Primary-AnnotateTumor.Rmd" and the "Primary-AnnotateStroma.Rmd" scripts.
+
+# Generate plots
+
+```{r}
+ggsave("Plots/UMAP-all-cell-cycle.pdf",
+  cc,
+  device = "pdf",
+  width = 6,
+  height = 5,
+  units = "in")
+
+map(names(fplots), function(f) {
+  ggsave(paste0("Plots/UMAP-expression-", f, ".pdf"),
+    fplots[[f]],
+    device = "pdf",
+    width = 6,
+    height = 5,
+    units = "in")
+})
+
+ggsave("Plots/UMAP-modules.pdf",
+  mods,
+  device = "pdf",
+  width = 15,
+  height = 10,
+  units = "in")
+
+ggsave("Plots/UMAP-tumor-cells.pdf",
+  tplot,
+  device = "pdf",
+  width = 6,
+  height = 5,
+  units = "in")
+```

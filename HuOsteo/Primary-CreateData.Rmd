@@ -23,12 +23,16 @@ library(Seurat)
 library(ggplot2)
 library(ggrepel)
 library(tidyverse)
-library(stringr)
 library(harmony)
-library(cowplot)
+library(patchwork)
 library(ggsci)
+library(future.apply)
+
+plan(multicore)
+options(future.globals.maxSize = 10000*1024^2)
 
 set.seed(888)
+setwd("/home/gdrobertslab/lab/Analysis/Ryan/RProjects/CellTypeAnnRefs/HuOsteo")
 
 sysfonts::font_add("Arial Narrow", "ARIALN.TTF", bold = "ARIALNB.TTF")
 showtext::showtext_auto()
@@ -58,20 +62,6 @@ rDimPlot <- function(object, title = "Unlabeled Plot",
     print("Too many identity classes to use this function. Requires <22.")
   }
 }
-
-rFeaturePlot <- function(object, features, title, pt.size = 1, order = T, ...) {
-  p <- Seurat::FeaturePlot(
-    object = object,
-    features = features,
-    pt.size = pt.size,
-    order = order,
-    cols = (c("lightgoldenrod", "darkred")),
-    ...) +
-    ggtitle(title) +
-    coord_fixed()
-  print(p)
-  return(p)
-}
 ```
 
 # Load published data from GSE152048
@@ -95,19 +85,19 @@ geo1 <- tibble(
 )
 
 # Check if primary tumor directory exists and create if it doesn't
-if(!dir.exists("HuOsteo/PrimaryTumor")) {
-  tar_dir <- "HuOsteo/PrimaryTumor"
+if(!dir.exists("PrimaryTumor")) {
+  tar_dir <- "PrimaryTumor"
   dir.create(tar_dir)
 }
 
 # Download, file, and extract the files from GEO
-if(!dir.exists("HuOsteo/PrimaryTumor/GSE152048")) {
-  tar_dir <- "HuOsteo/PrimaryTumor/GSE152048"
+if(!dir.exists("PrimaryTumor/GSE152048")) {
+  tar_dir <- "PrimaryTumor/GSE152048"
   dir.create(tar_dir)
   geo_pre <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE152nnn/GSE152048/suppl/GSE152048_"
   for(s in geo1$s){
-    gse_path <- str_c(geo_pre, s, ".matrix.tar.gz")
-    tar_file <- str_c(tar_dir, "/", s, ".tar.gz ")
+    gse_path <- paste0(geo_pre, s, ".matrix.tar.gz")
+    tar_file <- paste0(tar_dir, "/", s, ".tar.gz ")
     download.file(gse_path, destfile = tar_file, method = "auto")
     untar(tar_file, exdir = tar_dir)
     file.remove(tar_file)
@@ -115,28 +105,21 @@ if(!dir.exists("HuOsteo/PrimaryTumor/GSE152048")) {
 }
 
 # Create a vector of normalized Seurat objects for all GSE152048 samples
-raw <- c()
-p <- list()
-for(s in geo1$s) {
-  x <- tenx_load_qc(str_c("HuOsteo/PrimaryTumor/GSE152048/",
+raw1 <- future_lapply(geo1$s, function(s) {
+  x <- tenx_load_qc(paste0("PrimaryTumor/GSE152048/",
                           s, "/"))
   x <- subset(x, subset = nCount_RNA < geo1$qc[geo1$s == s] & percent.mt <13)
   x$src <- s
   x$type <- geo1$type[geo1$s == s]
   x$path <- geo1$path[geo1$s == s]
   x$gse <- "GSE152048"
-  raw[[s]] <- x %>%
+  raw <- x %>%
     NormalizeData() %>%
     FindVariableFeatures() %>%
-    ScaleData() %>%
-    RunPCA(verbose = F) %>%
-    FindNeighbors(dims = 1:20) %>%
-    FindClusters(resolution = 0.3) %>%
-    RunUMAP(dims = 1:20)
-  p[[s]] <- rDimPlot(raw[[s]], str_c(s, " basic clustering"))
-}
-rm (x)
-plot_grid(plotlist = p, ncol = 3)
+    ScaleData()
+  return(raw)
+}, future.seed = 888)
+names(raw1) <- geo1$s
 ```
 
 # Load published data from GSE162454
@@ -154,73 +137,61 @@ geo2 <- tibble(
 )
 
 # If the raw data from GEO hasn't been downloaded, go get it
-if(!dir.exists("HuOsteo/PrimaryTumor/GSE162454")) {
-  tar_dir <- "HuOsteo/PrimaryTumor/GSE162454"
+if(!dir.exists("PrimaryTumor/GSE162454")) {
+  tar_dir <- "PrimaryTumor/GSE162454"
   dir.create(tar_dir)
   geo_pre <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE162nnn/GSE162454/suppl/GSE162454_RAW.tar"
-  tar_file <- str_c(tar_dir, "/", "GSE162454.tar.gz ")
+  tar_file <- paste0(tar_dir, "/", "GSE162454.tar.gz ")
   options(timeout = 300)
   download.file(geo_pre, destfile = tar_file, method = "auto")
   untar(tar_file, exdir = tar_dir)
   file.remove(tar_file)
   for(s in geo2$s) {
-    bfile <- str_c(geo2$pre[geo2$s == s], s, "_barcodes.tsv.gz")
-    ffile <- str_c(geo2$pre[geo2$s == s], s, "_features.tsv.gz")
-    mfile <- str_c(geo2$pre[geo2$s == s], s, "_matrix.mtx.gz")
-    samp_dir <- str_c(tar_dir, "/", s)
+    bfile <- paste0(geo2$pre[geo2$s == s], s, "_barcodes.tsv.gz")
+    ffile <- paste0(geo2$pre[geo2$s == s], s, "_features.tsv.gz")
+    mfile <- paste0(geo2$pre[geo2$s == s], s, "_matrix.mtx.gz")
+    samp_dir <- paste0(tar_dir, "/", s)
     dir.create(samp_dir)
-    file.rename(str_c(tar_dir, "/", bfile),
-      str_c(samp_dir, "/", "barcodes.tsv.gz"))
-    file.rename(str_c(tar_dir, "/", ffile),
-      str_c(samp_dir, "/", "features.tsv.gz"))
-    file.rename(str_c(tar_dir, "/", mfile),
-      str_c(samp_dir, "/", "matrix.mtx.gz"))
+    file.rename(paste0(tar_dir, "/", bfile),
+      paste0(samp_dir, "/", "barcodes.tsv.gz"))
+    file.rename(paste0(tar_dir, "/", ffile),
+      paste0(samp_dir, "/", "features.tsv.gz"))
+    file.rename(paste0(tar_dir, "/", mfile),
+      paste0(samp_dir, "/", "matrix.mtx.gz"))
   }
 }
 
 # Create a vector that contains normalized Seurat objects for all GSE162454
 #   samples
-p <- list()
-for(s in geo2$s) {
-  x <- tenx_load_qc(str_c("HuOsteo/PrimaryTumor/GSE162454/",
+raw2 <- future.apply::future_lapply(geo2$s, function(s) {
+  x <- tenx_load_qc(paste0("PrimaryTumor/GSE162454/",
                           s, "/"))
   x <- subset(x, subset = nCount_RNA < geo2$qc[geo2$s == s] & percent.mt <18)
   x$src <- s
   x$type <- "Primary"
   x$path <- "Conventional"
   x$gse <- "GSE162454"
-  raw[[s]] <- x %>%
+  raw <- x %>%
     NormalizeData() %>%
     FindVariableFeatures() %>%
     ScaleData() %>%
-    RunPCA(verbose = F) %>%
-    FindNeighbors(dims = 1:20) %>%
-    FindClusters(resolution = 0.3) %>%
-    RunUMAP(dims = 1:20)
-  p[[s]] <- rDimPlot(raw[[s]], str_c(s, " basic clustering"))
-}
-rm(x)
-plot_grid(plotlist = p, ncol = 3)
-
+  return(raw)
+}, future.seed = 888)
+names(raw2) <- geo2$s
 ```
 
 # Subsample and merge Seurat objects
 
-Subsample each patient sample so that we retain a representative number of cells from
-each. Merge the samples into a single Seurat object and perform a batch correction/
+Merge the samples into a single Seurat object and perform a batch correction/
 integration procedure using harmony. 
 
 ```{r}
 # Isolate samples obtained from primary tumors
-prim <- c()
+raw <- c(raw1, raw2)
+rm(raw1, raw2)
 raw <- raw[!names(raw) %in% c("BC10", "BC17")]
 
-# Downsample to retain equal numbers of cells across samples (equal representation)
-# for(s in names(raw)) {
-#   prim[[s]] <- subset(raw[[s]], cells = sample(Cells(raw[[s]]), 1000))
-# }
-
-# Combine the downsampled datasets into a single seurat object and re-normalize
+# Combine the datasets into a single seurat object and re-normalize
 comb <- merge(raw[[1]], y = raw[2:length(raw)],
   add.cell.ids = names(raw),
   project = "PrimaryReference"
@@ -232,37 +203,12 @@ comb <- comb %>%
   ScaleData() %>%
   RunPCA(verbose = F)
 
-# Run batch-correction/integration using harmony
-comb <- RunHarmony(comb, group.by.vars = "src")
-comb <- comb %>%
-  RunUMAP(reduction = "harmony", dims = 1:30) %>%
-  FindNeighbors(reduction = "harmony", dims = 1:30) %>%
-  FindClusters()
-
+# Run batch-correction/integration using harmony (rough clustering for now)
 comb <- RunHarmony(comb, group.by.vars = "src")
 comb <- comb %>%
   RunUMAP(reduction = "harmony", dims = 1:20) %>%
-  FindNeighbors(reduction = "harmony", dims = 1:20)
-
-plot <- list()
-opt <- tribble(
-  ~res, ~score, ~clusters
-)
-
-for(i in 1:9) {
-  opt[i, "res"] <- 0.1 * i
-  comb <- FindClusters(comb, resolution = opt$res[i])
-  plot[[i]] <- rDimPlot(comb, paste("Resolution", opt$res[i]))
-  opt[i, "score"] <- silhouette_mean(silhouette_seurat(comb))
-  opt[i, "clusters"] <- length(levels(comb$seurat_clusters))
-}
-
-plot_grid(plotlist = plot, ncol = 3)
-tumor <- FindClusters(comb,
-# resolution = opt$res[opt$score == max(opt$score)])
-# On manual review, I am enforcing a stringency of resolution = 3
-# due to negative effect of tumor cells on scoring
-  resolution = 0.2)
+  FindNeighbors(reduction = "harmony", dims = 1:20) %>%
+  FindClusters(resolution = 0.1)
 
 # Save a stopping point - merged and harmony aligned
 qs::qsave(comb, "comb.qs")
@@ -270,3 +216,21 @@ qs::qsave(comb, "comb.qs")
 
 The above saved qs object serves as the input for the "Primary-Cluster.Rmd"
 and other downstream scripts.
+
+# Generate plots and graphics to document
+
+```{r}
+ggsave("Plots/UMAP-unfiltered.pdf",
+  rDimPlot(comb, "Full Tumor Datasets"),
+  device = "pdf",
+  width = 6,
+  height = 5,
+  units = "in")
+
+ggsave("Plots/UMAP-unfiltered-panel.pdf",
+  rDimPlot(comb, "Full Tumor Datasets", split.by = "src", ncol = 4),
+  device = "pdf",
+  width = 12,
+  height = 15,
+  units = "in")
+```
