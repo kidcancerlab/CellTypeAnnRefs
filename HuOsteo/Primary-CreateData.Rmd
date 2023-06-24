@@ -53,14 +53,14 @@ geo1 <- tibble(
 )
 
 # Check if primary tumor directory exists and create if it doesn't
-if(!dir.exists("PrimaryTumor")) {
-  tar_dir <- "PrimaryTumor"
+if(!dir.exists("HuOsteo/PrimaryTumor")) {
+  tar_dir <- "HuOsteo/PrimaryTumor"
   dir.create(tar_dir)
 }
 
 # Download, file, and extract the files from GEO
-if(!dir.exists("PrimaryTumor/GSE152048")) {
-  tar_dir <- "PrimaryTumor/GSE152048"
+if(!dir.exists("HuOsteo/PrimaryTumor/GSE152048")) {
+  tar_dir <- "HuOsteo/PrimaryTumor/GSE152048"
   dir.create(tar_dir)
   geo_pre <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE152nnn/GSE152048/suppl/GSE152048_"
   for(s in geo1$s){
@@ -105,8 +105,8 @@ geo2 <- tibble(
 )
 
 # If the raw data from GEO hasn't been downloaded, go get it
-if(!dir.exists("PrimaryTumor/GSE162454")) {
-  tar_dir <- "PrimaryTumor/GSE162454"
+if(!dir.exists("HuOsteo/PrimaryTumor/GSE162454")) {
+  tar_dir <- "HuOsteo/PrimaryTumor/GSE162454"
   dir.create(tar_dir)
   geo_pre <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE162nnn/GSE162454/suppl/GSE162454_RAW.tar"
   tar_file <- paste0(tar_dir, "/", "GSE162454.tar.gz ")
