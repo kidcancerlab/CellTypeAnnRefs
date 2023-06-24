@@ -26,48 +26,16 @@ library(tidyverse)
 library(harmony)
 library(patchwork)
 library(ggsci)
-library(future.apply)
-
-plan(multicore)
-options(future.globals.maxSize = 10000*1024^2)
+library(parallel)
+library(parallelly)
 
 set.seed(888)
-setwd("/home/gdrobertslab/lab/Analysis/Ryan/RProjects/CellTypeAnnRefs/HuOsteo")
-
-sysfonts::font_add("Arial Narrow", "ARIALN.TTF", bold = "ARIALNB.TTF")
-showtext::showtext_auto()
-
-theme_set(ggpubr::theme_pubr())
-
-plot_cols <- c("#D43F3AFF", "#EEA236FF", "#357EBDFF", "#5CB85CFF", "#B8B8B8FF",
-  "#9632B8FF",  "#46B8DAFF", "#90302DFF", "#A66D04FF", "#2D577FFF", "#3E7E3EFF",
-  "#7D7D7DFF", "#6D1D87FF", "#097F9AFF", "#FF6E6AFF", "#FFBB70FF", "#68A4E3FF",
-  "#79D379FF", "#CDCDCDFF", "#BF6BE2FF", "#69D1F3FF")
-
-rDimPlot <- function(object, title = "Unlabeled Plot",
-  label = T, pt.size = 1, ...) {
-  if(length(levels(Idents(object))) < 22) {  
-    p <- Seurat::DimPlot(
-      object = object, 
-      label = label, 
-      pt.size = pt.size,
-      cols = alpha(plot_cols, 0.6),
-      ...) +
-      ggtitle(title) +
-      theme(legend.position = "none") +
-      coord_fixed()
-    print(p)
-    return(p)
-  } else {
-    print("Too many identity classes to use this function. Requires <22.")
-  }
-}
 ```
 
 # Load published data from GSE152048
 
 If not already done, download the data sets from the GEO repository, extract
-matrices, import into a Seurat object, perform initial QC and append relevant 
+matrices, import into a Seurat object, perform initial QC and append relevant
 clinical data for each sample, as reported in the manuscript.
 
 ```{r}
@@ -105,7 +73,7 @@ if(!dir.exists("PrimaryTumor/GSE152048")) {
 }
 
 # Create a vector of normalized Seurat objects for all GSE152048 samples
-raw1 <- future_lapply(geo1$s, function(s) {
+raw1 <- mclapply(geo1$s, function(s) {
   x <- tenx_load_qc(paste0("PrimaryTumor/GSE152048/",
                           s, "/"))
   x <- subset(x, subset = nCount_RNA < geo1$qc[geo1$s == s] & percent.mt <13)
@@ -118,7 +86,7 @@ raw1 <- future_lapply(geo1$s, function(s) {
     FindVariableFeatures() %>%
     ScaleData()
   return(raw)
-}, future.seed = 888)
+}, mc.cores = availableCores())
 names(raw1) <- geo1$s
 ```
 
@@ -163,7 +131,7 @@ if(!dir.exists("PrimaryTumor/GSE162454")) {
 
 # Create a vector that contains normalized Seurat objects for all GSE162454
 #   samples
-raw2 <- future.apply::future_lapply(geo2$s, function(s) {
+raw2 <- mclapply(geo2$s, function(s) {
   x <- tenx_load_qc(paste0("PrimaryTumor/GSE162454/",
                           s, "/"))
   x <- subset(x, subset = nCount_RNA < geo2$qc[geo2$s == s] & percent.mt <18)
@@ -176,14 +144,14 @@ raw2 <- future.apply::future_lapply(geo2$s, function(s) {
     FindVariableFeatures() %>%
     ScaleData() %>%
   return(raw)
-}, future.seed = 888)
+}, mc.cores = availableCores())
 names(raw2) <- geo2$s
 ```
 
 # Subsample and merge Seurat objects
 
 Merge the samples into a single Seurat object and perform a batch correction/
-integration procedure using harmony. 
+integration procedure using harmony.
 
 ```{r}
 # Isolate samples obtained from primary tumors
@@ -193,15 +161,14 @@ raw <- raw[!names(raw) %in% c("BC10", "BC17")]
 
 # Combine the datasets into a single seurat object and re-normalize
 comb <- merge(raw[[1]], y = raw[2:length(raw)],
-  add.cell.ids = names(raw),
-  project = "PrimaryReference"
+  add.cell.ids = names(raw)
 )
 
 comb <- comb %>%
   NormalizeData() %>%
   FindVariableFeatures() %>%
   ScaleData() %>%
-  RunPCA(verbose = F)
+  RunPCA(verbose = FALSE)
 
 # Run batch-correction/integration using harmony (rough clustering for now)
 comb <- RunHarmony(comb, group.by.vars = "src")
@@ -217,18 +184,18 @@ qs::qsave(comb, "comb.qs")
 The above saved qs object serves as the input for the "Primary-Cluster.Rmd"
 and other downstream scripts.
 
-# Generate plots and graphics to document
+# Generate plots and graphics to document results
 
 ```{r}
 ggsave("Plots/UMAP-unfiltered.pdf",
-  rDimPlot(comb, "Full Tumor Datasets"),
+  r_dim_plot(comb, "Full Tumor Datasets"),
   device = "pdf",
   width = 6,
   height = 5,
   units = "in")
 
 ggsave("Plots/UMAP-unfiltered-panel.pdf",
-  rDimPlot(comb, "Full Tumor Datasets", split.by = "src", ncol = 4),
+  r_dim_plot(comb, "Full Tumor Datasets", split.by = "src", ncol = 4),
   device = "pdf",
   width = 12,
   height = 15,
