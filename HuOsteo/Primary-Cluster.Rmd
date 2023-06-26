@@ -25,56 +25,10 @@ library(ggrepel)
 library(tidyverse)
 library(harmony)
 library(patchwork)
-library(future.apply)
-
-plan(multicore)
-options(future.globals.maxSize = 10000*1024^2)
+library(parallel)
+library(parallelly)
 
 set.seed(888)
-setwd("/home/gdrobertslab/lab/Analysis/Ryan/RProjects/CellTypeAnnRefs/HuOsteo")
-
-sysfonts::font_add("Arial Narrow", "ARIALN.TTF", bold = "ARIALNB.TTF")
-showtext::showtext_auto()
-
-theme_set(ggpubr::theme_pubr())
-
-plot_cols <- c("#D43F3AFF", "#EEA236FF", "#357EBDFF", "#5CB85CFF", "#B8B8B8FF",
-  "#9632B8FF",  "#46B8DAFF", "#90302DFF", "#A66D04FF", "#2D577FFF", "#3E7E3EFF",
-  "#7D7D7DFF", "#6D1D87FF", "#097F9AFF", "#FF6E6AFF", "#FFBB70FF", "#68A4E3FF",
-  "#79D379FF", "#CDCDCDFF", "#BF6BE2FF", "#69D1F3FF")
-
-rDimPlot <- function(object, title = "Unlabeled Plot",
-  label = T, pt.size = 1, ...) {
-  if(length(levels(Idents(object))) < 22) {  
-    p <- Seurat::DimPlot(
-      object = object, 
-      label = label, 
-      pt.size = pt.size,
-      cols = alpha(plot_cols, 0.6),
-      ...) +
-      ggtitle(title) +
-      theme(legend.position = "none") +
-      coord_fixed()
-    print(p)
-    return(p)
-  } else {
-    print("Too many identity classes to use this function. Requires <22.")
-  }
-}
-
-rFeaturePlot <- function(object, features, title, pt.size = 1, order = T, ...) {
-  p <- Seurat::FeaturePlot(
-    object = object,
-    features = features,
-    pt.size = pt.size,
-    order = order,
-    cols = (c("lightgoldenrod", "darkred")),
-    ...) +
-    ggtitle(title) +
-    coord_fixed()
-  print(p)
-  return(p)
-}
 ```
 
 # Reload the dataset
@@ -82,25 +36,25 @@ rFeaturePlot <- function(object, features, title, pt.size = 1, order = T, ...) {
 This script picks up where the "Primary-CreateData.Rmd" script left off, creating (and
 here reloading) the "comb.qs" object.
 
-```{r}
+```{r load_data}
 # Start from this stopping point - merged and harmony aligned
 comb <- qs::qread("comb.qs")
 
 # Plot the integrated samples
-rDimPlot(comb, "Primary Tumors (integrated)", repel = T)
+r_dim_plot(comb, "Primary Tumors (integrated)", repel = TRUE)
 ```
 
 ## Interim conclusions
 
 A broad array of distinct cell types is represented across the different primary
 tumor samples. These subsets appear to be of high enough quality and are appropriate
-for building both an tumor cell and a stromal reference.
+for building both a tumor cell and a stromal reference.
 
 # Evaluate for cell cycle
 
-```{r}
+```{r cell_cycle}
 comb <- kill_cc(comb)
-cc <- rDimPlot(comb, "All Cells - Cell Cycle Prediction")
+cc <- r_dim_plot(comb, "All Cells - Cell Cycle Prediction")
 ```
 
 # Begin cell type annotation
@@ -111,21 +65,24 @@ can focus in on the intratumoral heterogeneity.
 
 First, we will use some standard assays to look for canonical markers of osteosarcoma cells.
 
-```{r}
+```{r tumor_markers}
 feats <- c("COL1A1", "COL1A2", "SATB2")
 
-fplots <- lapply(feats, function(f) {
-  p <- rFeaturePlot(comb, f, features = f)
+fplots <- mclapply(feats, function(f) {
+  p <- r_feature_plot(comb, f, features = f)
   return(p)
-})
+}, mc.cores = availableCores())
 names(fplots) <- feats
+
+tmarks <- wrap_plots(fplots, ncol = length(fplots))
+tmarks
 ```
 
 Next, we will look at the markers that were used in the manuscript that reported the
 GSE152048 dataset. I'm not sure that these are the ideal markers, but they are somewhat
 useful, and this allows comparison to the published record.
 
-```{r, fig.height = 8, fig.width = 8}
+```{r stroma_markers, fig.height = 8, fig.width = 8}
 ms <- list(
   Osteoblastic = c("RUNX2", "COL1A1", "CDH11", "IBSP"),
   Chondroblastic = c("SOX9", "ACAN", "PTH1R"),
@@ -146,7 +103,7 @@ ms <- list(
 g <- list()
 for(f in names(ms)) {
   comb <- AddModuleScore(comb, ms[[f]], name = f)
-  g[[f]] <- rFeaturePlot(comb, f, features = str_c(f, "1"))
+  g[[f]] <- r_feature_plot(comb, f, features = str_c(f, "1"))
 }
 
 mods <- wrap_plots(
@@ -154,13 +111,14 @@ mods <- wrap_plots(
   labels = LETTERS[seq_len(length(g))],
   ncol = 5
 )
+mods
 ```
 
 # Isolate and subcluster the tumor cells
 
-```{r}
+```{r tumor_selection}
 if (!file.exists("selection.rds")) {
-  p <- rDimPlot(comb, "All Cells")
+  p <- r_dim_plot(comb, "All Cells")
   selection <- CellSelector(p)
   saveRDS(selection, "selection.rds")
 }
@@ -168,14 +126,17 @@ selection <- readRDS("selection.rds")
 Idents(comb) <- comb$seurat_clusters
 Idents(comb, cells = selection) <- "Tumor"
 
-tplot <- rDimPlot(comb, "Isolated (likely) tumor cells")
+tplot <- r_dim_plot(comb, "Isolated (likely) tumor cells")
+tplot
 ```
+
+# Establish a tumor cell signature
 
 Focus in on a module that defines the tumor cells so that we can isolate them.
 Given the purpose in creating an osteosarcoma signature, we will use an ROC
 statistic to create the DEG list.
 
-```{r}
+```{r tumor_signature}
 tmarks_roc <- FindMarkers(comb, ident.1 = "Tumor",
   test.use = "roc")
 tmarks_roc_labs <- tmarks_roc[
@@ -192,7 +153,7 @@ ggplot(tmarks_roc, aes(avg_log2FC, power)) +
 os_sig <- rownames(tmarks_roc_labs[
   tmarks_roc_labs$avg_log2FC > 0, ])
 comb <- AddModuleScore(comb, os_sig, name = "os_score")
-rFeaturePlot(comb, "OS Signature Score", features = "os_score1",
+r_feature_plot(comb, "OS Signature Score", features = "os_score1",
   min.cutoff = 1, max.cutoff = 5)
 ```
 
