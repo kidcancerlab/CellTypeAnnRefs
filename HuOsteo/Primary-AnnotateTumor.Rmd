@@ -26,56 +26,7 @@ library(tidyverse)
 library(patchwork)
 library(ggpubr)
 
-setwd("/home/gdrobertslab/lab/Analysis/Ryan/RProjects/CellTypeAnnRefs/HuOsteo")
 set.seed(888)
-
-sysfonts::font_add("Arial Narrow", "ARIALN.TTF", bold = "ARIALNB.TTF")
-showtext::showtext_auto()
-
-theme_set(theme_pubr())
-
-plot_cols <- c("#D43F3AFF", "#EEA236FF", "#357EBDFF", "#5CB85CFF", "#B8B8B8FF",
-  "#9632B8FF",  "#46B8DAFF", "#90302DFF", "#A66D04FF", "#2D577FFF", "#3E7E3EFF",
-  "#7D7D7DFF", "#6D1D87FF", "#097F9AFF", "#FF6E6AFF", "#FFBB70FF", "#68A4E3FF",
-  "#79D379FF", "#CDCDCDFF", "#BF6BE2FF", "#69D1F3FF")
-
-rDimPlot <- function(object, title = "Unlabeled Plot", subtitle = NA,
-  label = T, pt.size = 1, ...) {
-  if(length(levels(Idents(object))) < 22) {
-    p <- Seurat::DimPlot(
-      object = object, 
-      label = label, 
-      pt.size = pt.size,
-      cols = alpha(plot_cols, 0.6),
-      ...) +
-      labs(
-        title = title,
-        subtitle = subtitle) +
-      theme(legend.position = "none") +
-      coord_fixed()
-    print(p)
-    return(p)
-  } else {
-    print("Too many identity classes to use this function. Requires <22.")
-  }
-}
-
-rFeaturePlot <- function(object, features, title = "Unlabeled Plot", subtitle = NA,
-  pt.size = 1, order = T, ...) {
-  p <- Seurat::FeaturePlot(
-    object = object,
-    features = features,
-    pt.size = pt.size,
-    order = order,
-    cols = (c("lightgoldenrod", "darkred")),
-    ...) +
-    labs(
-      title = title,
-      subtitle = subtitle) +
-    coord_fixed()
-  print(p)
-  return(p)
-}
 ```
 
 # Isolate and subcluster the tumor cells
@@ -104,9 +55,9 @@ opt <- tribble(
 )
 
 for(i in 1:9) {
-  opt[i, "res"] <- 0.1 * i
+  opt[i, "res"] <- 0.05 * i + 1
   tumor <- FindClusters(tumor, resolution = opt$res[i])
-  plot[[i]] <- rDimPlot(tumor, paste("Resolution", opt$res[i]))
+  plot[[i]] <- r_dim_plot(tumor, paste("Resolution", opt$res[i]))
   opt[i, "score"] <- silhouette_mean(silhouette_seurat(tumor))
   opt[i, "clusters"] <- length(levels(tumor$seurat_clusters))
 }
@@ -208,7 +159,7 @@ for(t in deg_test) {
   for(c in names(clusters)) {
     cluster_number <- clusters[c]
 
-    scresults[[t]][[c]]$results <- 
+    scresults[[t]][[c]]$results <-
       FindMarkers(tumor, ident.1 = cluster_number) %>%
       arrange(-abs(avg_log2FC))
     labs <- head(scresults[[t]][[c]]$results, n = 15)
@@ -291,7 +242,7 @@ for(m in de_methods) {
 for(c in names(clusters)) {
   for(m in de_methods) {
     plots[[c]][[m]]$panel <-
-      (rDimPlot(tumor, "Osteosarcoma Primary Tumor Cells",
+      (r_dim_plot(tumor, "Osteosarcoma Primary Tumor Cells",
         subtitle = "Seurat-assigned clusters (optimized)") +
       plots[[c]][[m]]$volcano) /
       (plots[[c]][[m]]$BP +
@@ -320,7 +271,7 @@ tumor <- RenameIdents(tumor,
 
 tumor$assignment <- Idents(tumor)
 plots$assignment <-
-  rDimPlot(tumor, "Osteosarcoma Primary Tumor Cells",
+  r_dim_plot(tumor, "Osteosarcoma Primary Tumor Cells",
     subtitle = "Clusters assigned in this analysis",
     repel = T)
 
@@ -335,7 +286,7 @@ ggsave("HuOsteo/Plots/UMAP-new-labels.pdf",
   units = "in")
 
 # Create a transcript density plot
-plots$density <- rFeaturePlot(tumor, "nCount_RNA",
+plots$density <- r_feature_plot(tumor, "nCount_RNA",
   title = "Transcript Density",
   subtitle = "Number of counts per cell",
   max.cutoff = 50000)
@@ -349,7 +300,7 @@ ggsave("HuOsteo/Plots/UMAP-count-density.pdf",
 
 # Create a plot of cell cyle predictions
 tumor <- kill_cc(tumor)
-plots$cell_cycle <- rDimPlot(tumor,
+plots$cell_cycle <- r_dim_plot(tumor,
   title = "Cell Cycle Predictions",
   subtitle = "Based on transcriptional patterns")
 

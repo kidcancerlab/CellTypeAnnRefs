@@ -167,7 +167,7 @@ cells in the "Primary-AnnotateTumor.Rmd" and the "Primary-AnnotateStroma.Rmd" sc
 
 # Generate plots
 
-```{r}
+```{r save_plots}
 ggsave("Plots/UMAP-all-cell-cycle.pdf",
   cc,
   device = "pdf",
