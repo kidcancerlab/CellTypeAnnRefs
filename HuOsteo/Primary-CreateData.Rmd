@@ -169,13 +169,15 @@ comb <- merge(raw[[1]], y = raw[2:length(raw)],
   add.cell.ids = names(raw)
 ) %>%
   JoinLayers()
+rm(raw)
+gc()
 
 comb <- comb %>%
   NormalizeData() %>%
   FindVariableFeatures() %>%
   ScaleData() %>%
   RunPCA(verbose = FALSE)
-object.size()
+
 # Run batch-correction/integration using harmony (rough clustering for now)
 comb <- RunHarmony(comb, group.by.vars = "src")
 comb <- comb %>%
