@@ -33,43 +33,45 @@ set.seed(888)
 
 ```{r, fig.width = 8, fig.width = 8}
 # Isolate the tumor cells away from the comb Seurat object
-selection <- readRDS("selection.rds")
-tumor <- subset(qs::qread("comb.qs"), cells = selection)
+selection <- readRDS("HuOsteo/selection.rds")
+tumor <- subset(qs::qread("HuOsteo/comb.qs"), cells = selection)
+
+# For now, subset out a representative sampling of tumors
+tumor <- subset(tumor, src %in% c("BC6", "BC16", "BC20", "BC22"))
 
 # Normalize and scale tumor dataset
 tumor <- tumor %>%
   NormalizeData() %>%
   FindVariableFeatures() %>%
   ScaleData() %>%
-  RunPCA(verbose = F)
+  RunPCA(verbose = FALSE)
 
 # Run batch-correction/integration using harmony
-tumor <- RunHarmony(tumor, group.by.vars = "src")
-tumor <- tumor %>%
-  RunUMAP(reduction = "harmony", dims = 1:20) %>%
-  FindNeighbors(reduction = "harmony", dims = 1:20)
+# tumor <- RunHarmony(tumor, group.by.vars = "src") %>%
+#   RunUMAP(reduction = "harmony", dims = 1:30) %>%
+#   FindNeighbors(reduction = "harmony", dims = 1:30, k.param = 30)
 
-plot <- list()
-opt <- tribble(
-  ~res, ~score, ~clusters
-)
+# plot <- list()
+# opt <- tribble(
+#   ~res, ~score, ~clusters
+# )
 
-for(i in 1:9) {
-  opt[i, "res"] <- 0.05 * i + 1
-  tumor <- FindClusters(tumor, resolution = opt$res[i])
-  plot[[i]] <- r_dim_plot(tumor, paste("Resolution", opt$res[i]))
-  opt[i, "score"] <- silhouette_mean(silhouette_seurat(tumor))
-  opt[i, "clusters"] <- length(levels(tumor$seurat_clusters))
-}
+# for(i in 1:9) {
+#   opt[i, "res"] <- 0.05 * i + 1
+#   tumor <- FindClusters(tumor, resolution = opt$res[i])
+#   plot[[i]] <- r_dim_plot(tumor, paste("Resolution", opt$res[i]))
+#   opt[i, "score"] <- silhouette_mean(silhouette_seurat(tumor))
+#   opt[i, "clusters"] <- length(levels(tumor$seurat_clusters))
+# }
 
-print(as_tibble(opt))
+# print(as_tibble(opt))
 
-ggsave("Plots/UMAP-all-tumor-cells.pdf",
-  wrap_plots(plot[1:5], ncol = 3),
-  device = "pdf",
-  width = 12,
-  height = 8,
-  units = "in")
+# ggsave("Plots/UMAP-all-tumor-cells.pdf",
+#   wrap_plots(plot[1:5], ncol = 3),
+#   device = "pdf",
+#   width = 12,
+#   height = 8,
+#   units = "in")
 
 # Manually enforcing a resolution of 0.2 based on review of clusters
 # and potential DEGs. Silhouette performs poorly for scoring intratumor
@@ -77,6 +79,80 @@ ggsave("Plots/UMAP-all-tumor-cells.pdf",
 tumor <- FindClusters(tumor, resolution = 0.2)
 clusters <- levels(factor(tumor$seurat_clusters))
 names(clusters) <- paste0("Cluster", clusters)
+
+tumor <- run_fdl(tumor)
+r_dim_plot(tumor, reduction = "fdl") +
+  labs(title = "Primary tumor cells")
+
+tumor <- kill_cc(tumor)
+Idents(tumor) <- tumor$seurat_clusters
+
+r_dim_plot(tumor,
+    reduction = "fdl",
+    group.by = "Phase",
+    label = FALSE) +
+  labs(title = "Human Primary Tumor - Cell Cycle") +
+  theme(legend.position = "right")
+
+qs::qsave(tumor, "HuOsteo/comb-tumor.qs")
+```
+
+# Investigate whether there is a subset of cells with activation of NF-kB
+```{r}
+sigs <- msigdbr::msigdbr(species = "Homo sapiens",
+    category = "H") %>%
+  select(gs_name, gene_symbol)
+
+# degs <- subset(pdx_lungs, idents = c(0, 2, 5, 6)) %>%
+#   FindAllMarkers()
+
+# pathways <- future_lapply(unique(degs$cluster), function(i) {
+#   clust_degs <- degs %>%
+#     filter(cluster == i & p_val_adj < 0.05) %>%
+#     arrange(-avg_log2FC) %>%
+#     pull(avg_log2FC, name = gene)
+#   clusterProfiler::GSEA(clust_degs,
+#     TERM2GENE = sigs,
+#     nPermSimple = 10000) %>%
+#     mutate(p.adjust = -log10(p.adjust))
+# })
+
+# plots <- lapply(seq_along(pathways), function(p) {
+#   enrichplot::dotplot(pathways[[p]] %>% filter(NES > 0),
+#     x = "NES",
+#     showCategory = 15,
+#     title = paste("Cluster", unique(degs$cluster)[p]))
+# })
+
+# patchwork::wrap_plots(plots, ncol = 2)
+
+gs <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+
+cell_ranks <- AUCell::AUCell_run(
+  tumor[["RNA"]]$counts,
+  sigs %>% filter(gs_name == gs) %>% pull(gene_symbol)
+)
+
+tumor$nfkb_activity <- AUCell::getAUC(cell_ranks)[1,]
+
+FeaturePlot(tumor,
+  "nfkb_activity",
+  reduction = "fdl",
+  cols = c("#EEEEEE", "#ae0600"),
+  min.cutoff = 0.15,
+  pt.size = 1,
+  order = TRUE) +
+  coord_fixed()
+
+FeaturePlot(tumor,
+  "IL1R1",
+  reduction = "fdl",
+  cols = c("#EEEEEE", "#ae0600"),
+  min.cutoff = 1,
+  max.cutoff = 4.8,
+  pt.size = 1,
+  order = TRUE) +
+  coord_fixed()
 ```
 
 # Generate DEG lists for each cluster using a pseudobulk procedure

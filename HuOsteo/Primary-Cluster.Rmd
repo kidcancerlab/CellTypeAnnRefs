@@ -38,7 +38,7 @@ here reloading) the "comb.qs" object.
 
 ```{r load_data}
 # Start from this stopping point - merged and harmony aligned
-comb <- qs::qread("comb.qs")
+comb <- qs::qread("HuOsteo/comb.qs")
 
 # Plot the integrated samples
 r_dim_plot(comb, "Primary Tumors (integrated)", repel = TRUE)

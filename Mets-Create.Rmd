@@ -1,0 +1,136 @@
+
+```{r}
+library(rrrSingleCellUtils)
+library(Seurat)
+library(tidyverse)
+library(future)
+library(future.apply)
+if(Sys.info()['sysname'] == "Windows") {
+  plan(multisession, workers = 5)
+} else {
+  plan(multicore)
+}
+options(future.globals.maxSize = 10000 * 1024^2)
+```
+
+
+```{r}
+pre_path <- "~/../lab/Counts_2/"
+# pre_path <- "C:/Users/rxr014/OneDrive - Nationwide Children's Hospital/BIScratch/"
+post_path <- "/filtered_feature_bc_matrix"
+samples <- tribble(
+  ~id, ~model, ~mt_cutoff, ~count_cutoff, ~species,
+  "S0058", "Patient", 25, 160000, "",
+  "S0059", "Patient", 25, 160000, "",
+  "S0217", "Patient", 25, 160000, "",
+  "S0218", "Patient", 25, 160000, "",
+  "S0262", "Patient", 25, 160000, "",
+  "S0264", "Patient", 25, 160000, ""
+)
+
+human_mets <- future_lapply(seq_along(samples$id), function(s) {
+  o <- tenx_load_qc(
+    paste0(pre_path, samples$id[s], post_path),
+    species_pattern = samples$species[s],
+    violin_plot = FALSE
+  ) %>%
+  subset(
+    percent.mt < samples$mt_cutoff[s] &
+    nCount_RNA < samples$count_cutoff[s]
+  ) %>%
+  NormalizeData()
+
+  o$id <- samples$id[s]
+  o$model <- samples$model[s]
+
+  return(o)
+})
+
+human_mets <- merge(human_mets[[1]], human_mets[2:length(samples$id)],
+  add.cell.ids = samples$id) %>%
+  JoinLayers()
+
+human_mets <- human_mets %>%
+  FindVariableFeatures(nfeatures = 5000) %>%
+  ScaleData() %>%
+  RunPCA() %>%
+  harmony::RunHarmony(group.by.vars = "id")
+
+human_mets <- human_mets %>%
+  FindNeighbors(reduction = "harmony", k.param = 40L) %>%
+  FindClusters(resolution = 0.2) %>%
+  RunUMAP(reduction = "harmony", dims = 1:30)
+
+r_dim_plot(human_mets) +
+  labs(title = "Human Lung Mets")
+r_dim_plot(human_mets, group.by = "id")
+r_feature_plot(human_mets, "COL1A1")
+
+human_mets <- kill_cc(human_mets)
+Idents(human_mets) <- human_mets$seurat_clusters
+```
+
+## Isolate tumor cells
+```{r}
+met_tumor <- subset(human_mets, idents = c(1, 3, 5))
+
+met_tumor <- met_tumor %>%
+  FindVariableFeatures(nfeatures = 5000) %>%
+  ScaleData() %>%
+  RunPCA() %>%
+  harmony::RunHarmony(group.by.vars = "id") %>%
+  FindNeighbors(reduction = "harmony", k.param = 40L) %>%
+  FindClusters(resolution = 0.2) %>%
+  RunUMAP(reduction = "harmony", dims = 1:30)
+
+r_dim_plot(met_tumor)
+
+met_tumor <- kill_cc(met_tumor)
+met_tumor <- run_fdl(met_tumor)
+
+r_dim_plot(met_tumor, reduction = "fdl", group.by = "seurat_clusters") +
+  labs(title = "Metastasis tumor cells")
+
+r_dim_plot(met_tumor,
+    reduction = "fdl",
+    group.by = "Phase",
+    label = FALSE) +
+  labs(title = "Human Metastases - Cell Cycle") +
+  theme(legend.position = "right")
+
+r_feature_plot(met_tumor, "IL6", reduction = "fdl")
+```
+
+# Investigate whether there is a subset of cells with activation of NF-kB
+```{r}
+sigs <- msigdbr::msigdbr(species = "Homo sapiens",
+    category = "H") %>%
+  select(gs_name, gene_symbol)
+
+gs <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+
+cell_ranks <- AUCell::AUCell_run(
+  met_tumor[["RNA"]]$counts,
+  sigs %>% filter(gs_name == gs) %>% pull(gene_symbol)
+)
+
+met_tumor$nfkb_activity <- AUCell::getAUC(cell_ranks)[1, ]
+
+FeaturePlot(met_tumor,
+  "nfkb_activity",
+  reduction = "fdl",
+  cols = c("#EEEEEE", "#ae0600"),
+  min.cutoff = 0.15,
+  pt.size = 1,
+  order = TRUE) +
+  coord_fixed()
+
+FeaturePlot(met_tumor,
+  "IL1R1",
+  reduction = "fdl",
+  cols = c("#EEEEEE", "#ae0600"),
+  min.cutoff = 1,
+  pt.size = 1,
+  order = TRUE) +
+  coord_fixed()
+```

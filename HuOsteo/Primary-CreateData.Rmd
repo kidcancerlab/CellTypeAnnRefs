@@ -170,7 +170,7 @@ comb <- merge(raw[[1]], y = raw[2:length(raw)],
 ) %>%
   JoinLayers()
 rm(raw)
-gc()
+# gc()
 
 comb <- comb %>%
   NormalizeData() %>%
